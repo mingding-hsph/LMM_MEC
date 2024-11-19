@@ -30,10 +30,11 @@ corr_x<-cor(new_data[, c('bx1', 'bx2', 'bx3')])
     betaY=new_data$by, 
     betaX_se=cbind(new_data$bx_se1, new_data$bx_se2, new_data$bx_se3),
     betaY_se=new_data$by_se,
-    corr_snps_tslmm =corr_snps,
-    corr_X_tslmm =corr_x,
+    corr_snps_lmmmec =corr_snps,
+    corr_X_lmmmec =corr_x,
     loop_rem=500,
-    cutoff_rem=0.00001 
+    cutoff_rem=0.00001,
+    mec_loop=1
   )
   
   model_output
