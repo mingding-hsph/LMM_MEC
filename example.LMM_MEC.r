@@ -34,7 +34,7 @@ corr_x<-cor(new_data[, c('bx1', 'bx2', 'bx3')])
     corr_X_lmmmec =corr_x,
     loop_rem=500,
     cutoff_rem=0.00001,
-    mec_loop=1
+    mec_loop=30
   )
   
   model_output
