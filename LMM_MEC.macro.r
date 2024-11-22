@@ -9,9 +9,9 @@
 ##install the following packages before running the macro
 
 library(matrixcalc)  ##check singular.matrix
-library(MASS)  ##Moore-Penrose inverse
-library(mvtnorm)  ##simulate multivariate normal distribution
-library(numDeriv)  ##jacobian matrix
+library(MASS)        ##Moore-Penrose inverse
+library(mvtnorm)     ##simulate multivariate normal distribution
+library(numDeriv)    ##jacobian matrix
 
 
 ##betaX: a N*M matrix of point estimates of summary statistics of risk factors, 
@@ -67,9 +67,9 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
   betaX_new=cbind(betaX,intercept)
   
   ##############################################################################################
-  ###I. obtain lambda for measurement error correction in the summary statistics of risk factors
+  ###I. obtain lambda for measurement error correction
   
-  #simulate a validation study
+  #obtain the means and the covariance matrix of the multivariate distribution to simulate validation studies
   
   matrix_s<-matrix(NA, nrow = nrow(betaX)*ncol(betaX), ncol = nrow(betaX)*ncol(betaX))
   
@@ -107,21 +107,19 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
   nrow(mean_s)
   ncol(mean_s)
   
-  #simulate the validation dataset
+  #simulate the validation studies
   
   lam_mean<- list()  
   lam_var<- list() 
-  
+
   for (mec_simu in 1:mec_loop){
     
-    #set.seed(mec_simu)
+    set.seed(mec_simu)
     
     exposure_s <- t(rmvnorm(1, mean=mean_s, sigma=matrix_s, method = "svd") ) ##sigma is the covariance for each variable
     
     nrow(exposure_s)
     ncol(exposure_s)
-    
-    # set.seed(Sys.time()) 
     
     betaX_simu=data.frame(betaX)  
     
@@ -134,52 +132,82 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
     }
     
     
-    ##multivariate model to obtain lambda
+    ##run a regression calibration model to obtain lambda
     
-    y_sim<-data.frame((as.matrix(betaX_simu[,paste0('s', 1:ncol(betaX))])))
+    y_sim<-(as.matrix(betaX_simu[,paste0('s', 1:ncol(betaX))]))
     
-    x_sim<-as.matrix(betaX_simu[,1:ncol(betaX)]) ##choose the first 3 columns
+    x_sim<-data.frame(as.matrix(betaX_simu[,1:ncol(betaX)])) ##choose the first 3 columns
     
-    mvmod <- lm(x_sim ~ . , data=y_sim)  
+    mvmod <- lm(y_sim ~ . , data=x_sim)  
     
     lam_mean[[mec_simu]]<-(as.matrix(coef(mvmod)))[2:(ncol(betaX)+1),]
-    
+      
     lam_var[[mec_simu]]<-(vcov(mvmod))[-((ncol(betaX)+1)*((1:ncol(betaX))-1)+1),-((ncol(betaX)+1)*((1:ncol(betaX))-1)+1)]
-    
+
   }
+  
+  set.seed(Sys.time()) 
+  
+  
+  #pool the mean and variance of lambuda across simulated datasets using Rubin's rule
+  
+  ##pooled mean
   
   lam_mean_pool<-Reduce("+",  lam_mean)/mec_loop
   
-  lam_var_pool<-Reduce("+",  lam_var)/mec_loop
- 
-  ##obtain inverse lam
+  ##within matrice variance
+  
+  lam_var_wt<-Reduce("+",  lam_var)/mec_loop
+  
+  ## between matrice variance
+  
+  vec_lam<-matrix(NA, nrow=mec_loop, ncol=ncol(betaX)^2)
+    
+  for (mec_simu in 1:mec_loop){
+    
+    for (mec_simu_x in 1:ncol(betaX)) {
+      for (mec_simu_y in 1:ncol(betaX)) {
+    vec_lam[mec_simu,((mec_simu_x-1)*ncol(betaX)+(mec_simu_y))]=lam_mean[[mec_simu]][mec_simu_x,mec_simu_y]
+      }
+    }
+    
+  }
+  
+  lam_var_bt<-cov(vec_lam)/(mec_loop-1)
+
+  ##total variance
+  
+  lam_var_pool<-lam_var_wt+(1+1/mec_loop)*lam_var_bt
+
+  
+  ##inverse lambda
   
   #mean
   lam_inverse<-solve(lam_mean_pool)
   
-  ##variance using delta method
+  ##variance using delta method 
   
   func_lam <- function(x_lam) {
     solve(x_lam)
   }
   
-  x_lam <-lam_mean_pool   ##mean value of lam
+  x_lam <-lam_mean_pool   ##mean value of lambda
   
   lam_jaco_pool<-jacobian(func_lam, x_lam)  ##jacobian matrix
   
   lam_var_inverse<-lam_jaco_pool%*%lam_var_pool%*%t(lam_jaco_pool)
   
-  ##variables to be used for the next step
+  ##inverse lambda in matrix form to be used for measurement error correction
   
   lambda<-as.matrix(lam_inverse)  
-  
+
   lambda_var<-as.matrix(lam_var_inverse)
-  
+
   
   ##############################################################################################
   ######################II. choose random/fixed-effects model
   
-  ##test for heterogeneity of betaY
+  ##test the heterogeneity of betaY
   
   var_mtrx_f_ld<-matrix(NA, nrow = nrow(betaY), ncol = nrow(betaY))
   
@@ -232,17 +260,16 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
     
     cov_wo_mec<-as.matrix(beta_var_f_ld[1:ncol(betaX),1:ncol(betaX)])
     
-    ##given that k=k'*lamdata, b_wt_mec=t(b_wo_mec)%*%as.matrix(lambda)
-    ##we transpose b_wt_mec, as it is easier to calculate the covariance matrix
+    ##b_wo_mec is ncol(betaX)*1, b_wt_mec is 1*ncol(betaX), as it is easier to calculate the covariance matrix
+    ##b_wt_mec=t(b_wo_mec)%*%as.matrix(lambda), thus,t(b_wt_mec)=t(as.matrix(lambda))%*%b_wo_mec
     
     b_wt_mec<-t(as.matrix(lambda))%*%b_wo_mec
-    
-    ##no need to transpose variance matrix, as it is sysmetric
     
     lambda_new<-t(as.matrix(lambda)) 
     
     ##covariance matrix
-    
+    ##no need to transpose variance matrix, as it is sysmetrical
+
     cov_wt_mec<-matrix(NA,nrow=ncol(betaX),ncol=ncol(betaX))
     
     for (m in 1:ncol(betaX))
@@ -271,7 +298,7 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
           }
         }
         
-        item1_sum<-colSums(matrix(rowSums(item1))) ##sum up all numbers in item1
+        item1_sum<-colSums(matrix(rowSums(item1))) ##sum up item1
         item2_sum<-colSums(matrix(rowSums(item2)))
         item3_sum<-colSums(matrix(rowSums(item3)))
         
@@ -279,9 +306,6 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
         
       }
     }
-    
-    ##check whether the covariance matrix is symmetric
-    cov_wt_mec
     
     ###calculate 95% CI
     
@@ -392,16 +416,15 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
     
     cov_wo_mec<-as.matrix(beta_var_r_ld[1:ncol(betaX),1:ncol(betaX)])
     
-    ##given that k=k'*lamdata, b_wt_mec=t(b_wo_mec)%*%as.matrix(lambda)
-    ##we transpose b_wt_mec, as it is easier to calculate the covariance matrix
+    ##b_wo_mec is ncol(betaX)*1, b_wt_mec is 1*ncol(betaX), as it is easier to calculate the covariance matrix
+    ##b_wt_mec=t(b_wo_mec)%*%as.matrix(lambda), thus,t(b_wt_mec)=t(as.matrix(lambda))%*%b_wo_mec
     
     b_wt_mec<-t(as.matrix(lambda))%*%b_wo_mec
-    
-    ##no need to transpose the covariance matrix, as it is sysmetric
     
     lambda_new<-t(as.matrix(lambda)) 
     
     ##covariance
+    ##no need to transpose the covariance matrix, as it is symmetrical
     
     cov_wt_mec<-matrix(NA,nrow=ncol(betaX),ncol=ncol(betaX))
     
@@ -431,7 +454,7 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
           }
         }
         
-        item1_sum<-colSums(matrix(rowSums(item1))) ##sum up all numbers in item1
+        item1_sum<-colSums(matrix(rowSums(item1))) ##sum up item1
         item2_sum<-colSums(matrix(rowSums(item2)))
         item3_sum<-colSums(matrix(rowSums(item3)))
         
@@ -440,8 +463,6 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
       }
     }
     
-    ##check whether the covariance matrix is symmetric
-    cov_wt_mec
     
     ###calculate 95% CI
     
@@ -468,9 +489,6 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
                               "Mean_wo_mec", "SE_wo_mec","Pvalue_wo_mec", "ll_wo_mec", "ul_wo_mec")
     
     rownames(ld_wt_mec)=paste0("variable",1:ncol(betaX))
-    
-    # if   (stop)  { 
-    #   print("random-effects model does not converge")}
     
     print("Random-effects model was used")
     
