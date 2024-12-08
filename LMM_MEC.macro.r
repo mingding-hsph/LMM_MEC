@@ -140,7 +140,7 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
     
     mvmod <- lm(y_sim ~ . , data=x_sim)  
     
-    lam_mean[[mec_simu]]<-(as.matrix(coef(mvmod)))[2:(ncol(betaX)+1),]
+    lam_mean[[mec_simu]]<-as.matrix(as.matrix(coef(mvmod))[2:(ncol(betaX)+1),])
       
     lam_var[[mec_simu]]<-(vcov(mvmod))[-((ncol(betaX)+1)*((1:ncol(betaX))-1)+1),-((ncol(betaX)+1)*((1:ncol(betaX))-1)+1)]
 
@@ -172,8 +172,8 @@ LMM_MEC=function(betaX,betaY,betaX_se, betaY_se,corr_snps_lmmmec,corr_X_lmmmec,l
     }
     
   }
-  
-  lam_var_bt<-cov(vec_lam)/(mec_loop-1)
+
+    lam_var_bt<-cov(vec_lam)/(mec_loop-1)
 
   ##total variance
   
